@@ -88,6 +88,7 @@ dependencies {
     implementation "org.apache.logging.log4j:log4j-slf4j2-impl:${log4j2Version}"
     implementation 'org.bgee.log4jdbc-log4j2:log4jdbc-log4j2-jdbc4.1:1.16'
 
+    //
     // Redis
 //    implementation 'org.springframework.data:spring-data-redis:2.7.6'
 //    implementation 'redis.clients:jedis:3.8.0'
