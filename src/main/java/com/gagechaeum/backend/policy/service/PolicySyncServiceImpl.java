@@ -8,6 +8,7 @@ import com.gagechaeum.backend.document.mapper.DocumentMapper;
 import com.gagechaeum.backend.document.mapper.RequiredDocumentMapper;
 import com.gagechaeum.backend.policy.client.Gov24ApiClient;
 import com.gagechaeum.backend.policy.domain.Policy;
+import com.gagechaeum.backend.policy.dto.external.Gov24ApiDetailDto;
 import com.gagechaeum.backend.policy.dto.external.Gov24ApiDetailResponseDto;
 import com.gagechaeum.backend.policy.dto.external.Gov24ApiResponseDto;
 import com.gagechaeum.backend.policy.dto.external.Gov24ApiServiceDto;
@@ -74,7 +75,9 @@ public class PolicySyncServiceImpl implements PolicySyncService {
                 .collect(Collectors.toMap(Policy::getPolicyId, Policy::getModificationDate));
 
         do {
+            long pageFetchStart = System.currentTimeMillis();
             Gov24ApiResponseDto apiResponse = gov24ApiClient.fetchPolicies(page, perPage);
+            log.error("fetchPolicies page {} took {} ms", page, System.currentTimeMillis() - pageFetchStart);
             if (apiResponse == null || apiResponse.getData() == null || apiResponse.getData().isEmpty()) {
                 log.error("페이지 {}에서 더 이상 데이터가 없습니다. 동기화를 종료합니다.", page);
                 break;
@@ -82,7 +85,10 @@ public class PolicySyncServiceImpl implements PolicySyncService {
 
             log.error("{} 페이지에서 {}개의 정책을 처리합니다.", page, apiResponse.getCurrentCount());
 
+            log.error("page: {}, currentCount: {}, totalCount: {}", page, apiResponse.getCurrentCount(), apiResponse.getTotalCount());
             for (Gov24ApiServiceDto dto : apiResponse.getData()) {
+                long policyStart = System.currentTimeMillis();
+                log.error("processing policyId: {}", dto.getServiceId());
                 if (!isSmallBusinessCashSupportPolicy(dto)) {
                     log.trace("소상공인 대상 현금 지원 정책이 아니므로 건너<binary data, 2 bytes>니다 (policyName: {}, userType: {}, supportType: {})",
                             dto.getServiceName(), dto.getUserType(), dto.getSupportContent());
@@ -98,20 +104,27 @@ public class PolicySyncServiceImpl implements PolicySyncService {
                                 policy.getModificationDate().isAfter(existingDate));
 
                 if (needsUpdate) {
+                    long upsertStart = System.currentTimeMillis();
                     policyMapper.saveOrUpdatePolicy(policy);
+                    log.error("policy upsert policyId: {} took {} ms", policy.getPolicyId(), System.currentTimeMillis() - upsertStart);
                     log.debug("소상공인 지원금 정책 정보 저장 완료 (policyId: {})", policy.getPolicyId());
 
+                    long docStart = System.currentTimeMillis();
                     fetchAndSavePolicyDocuments(policy.getPolicyId());
+                    log.error("fetchAndSavePolicyDocuments policyId: {} took {} ms", policy.getPolicyId(), System.currentTimeMillis() - docStart);
 
                     if (isNewPolicy) {
                         try {
+                            long chatStart = System.currentTimeMillis();
                             chatService.createChatRoomForPolicy(policy);
+                            log.error("chat room create policyId: {} took {} ms", policy.getPolicyId(), System.currentTimeMillis() - chatStart);
                             log.debug("신규 정책에 대한 채팅방 생성을 요청했습니다. (policyId: {})", policy.getPolicyId());
                         } catch (Exception e) {
                             log.error("정책 ID '{}'의 채팅방 생성 중 오류 발생", policy.getPolicyId(), e);
                         }
                     }
                 }
+                log.error("processing policyId: {} total took {} ms", dto.getServiceId(), System.currentTimeMillis() - policyStart);
             }
             page++;
         } while (true);
@@ -121,6 +134,7 @@ public class PolicySyncServiceImpl implements PolicySyncService {
     private void fetchAndSavePolicyDocuments(String serviceId) {
         int page = 1;
         final int perPage = 100;
+        long detailTotalStart = System.currentTimeMillis();
 
         List<Document> allDocuments = documentMapper.findAll();
         Document etcDocument = allDocuments.stream()
@@ -129,7 +143,19 @@ public class PolicySyncServiceImpl implements PolicySyncService {
                 .orElseThrow(() -> new IllegalStateException("'기타' 서류가 DB에 없습니다."));
 
         while (true) {
+            long detailFetchStart = System.currentTimeMillis();
             Gov24ApiDetailResponseDto response = gov24ApiClient.fetchPolicyDetailsSync(serviceId, page, perPage);
+            int detailCount = (response == null || response.getData() == null) ? 0 : response.getData().size();
+            log.error("fetchPolicyDetailsSync serviceId: {} page: {} took {} ms (count: {})",
+                    serviceId, page, System.currentTimeMillis() - detailFetchStart, detailCount);
+            if (response != null && response.getData() != null && !response.getData().isEmpty()) {
+                Gov24ApiDetailDto first = response.getData().get(0);
+                log.error("detail sample serviceId: {} page: {} firstDetailServiceId: {} requiredDocumentsLen: {}",
+                        serviceId,
+                        page,
+                        first.getServiceId(),
+                        first.getRequiredDocuments() == null ? 0 : first.getRequiredDocuments().length());
+            }
 
             if (response == null || response.getData() == null || response.getData().isEmpty()) {
                 break;
@@ -163,6 +189,8 @@ public class PolicySyncServiceImpl implements PolicySyncService {
             });
             page++;
         }
+        log.error("fetchAndSavePolicyDocuments total serviceId: {} took {} ms",
+                serviceId, System.currentTimeMillis() - detailTotalStart);
     }
 
     private boolean isSmallBusinessCashSupportPolicy(Gov24ApiServiceDto dto) {

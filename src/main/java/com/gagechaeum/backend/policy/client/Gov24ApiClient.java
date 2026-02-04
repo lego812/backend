@@ -7,6 +7,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
+import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.RestClientException;
 import org.springframework.web.client.RestTemplate;
 import org.springframework.web.util.UriComponentsBuilder;
@@ -42,8 +43,20 @@ public class Gov24ApiClient {
                 .toUri();
 
         try {
+            log.info("Gov24 list API params: page={}, perPage={}", page, perPage);
             log.info("Requesting Gov24 Policy List API: {}", uri);
             return restTemplate.getForObject(uri, Gov24ApiResponseDto.class);
+        } catch (HttpClientErrorException e) {
+            log.error(
+                    "Gov24 list API error: status={}, page={}, perPage={}, headers={}, body={}",
+                    e.getStatusCode(),
+                    page,
+                    perPage,
+                    e.getResponseHeaders(),
+                    e.getResponseBodyAsString(),
+                    e
+            );
+            throw new ExternalApiException("Failed to fetch policies from Gov24 API", e);
         } catch (RestClientException e) {
             log.error("Failed to fetch policies from Gov24 API", e);
             throw new ExternalApiException("Failed to fetch policies from Gov24 API", e);
@@ -60,7 +73,22 @@ public class Gov24ApiClient {
                 .encode()
                 .toUri();
 
+        log.info("Gov24 detail API params: serviceId={}, page={}, perPage={}", serviceId, page, perPage);
         log.info("Requesting Gov24 Policy Detail API: {}", uri);
-        return restTemplate.getForObject(uri, Gov24ApiDetailResponseDto.class);
+        try {
+            return restTemplate.getForObject(uri, Gov24ApiDetailResponseDto.class);
+        } catch (HttpClientErrorException e) {
+            log.error(
+                    "Gov24 detail API error: status={}, serviceId={}, page={}, perPage={}, headers={}, body={}",
+                    e.getStatusCode(),
+                    serviceId,
+                    page,
+                    perPage,
+                    e.getResponseHeaders(),
+                    e.getResponseBodyAsString(),
+                    e
+            );
+            throw e;
+        }
     }
 }
